@@ -1,16 +1,19 @@
 {
-  "name": "discordjs-railway-starter",
+  "name": "nek-nekoma-report-system",
   "version": "1.0.0",
-  "private": true,
-  "main": "src/index.js",
-  "license": "MIT",
+  "description": "Nek:// Nekoma Report System — Discord gank report bot",
+  "main": "index.js",
+  "type": "commonjs",
   "scripts": {
-    "start": "node src/index.js"
-  },
-  "dependencies": {
-    "discord.js": "^14.27.0"
+    "start": "node index.js"
   },
   "engines": {
-    "node": "24.x"
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "canvas": "^2.11.2",
+    "discord.js": "^14.27.0",
+    "dotenv": "^16.6.1",
+    "node-canvas-with-twemoji-and-discord-emoji": "^1.2.2"
   }
 }
