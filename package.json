@@ -2,10 +2,10 @@
   "name": "nek-nekoma-report-system",
   "version": "1.0.0",
   "description": "Nek:// Nekoma Report System — Discord gank report bot",
-  "main": "index.js",
+  "main": "src/index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node index.js"
+    "start": "node src/index.js"
   },
   "engines": {
     "node": ">=18.0.0"
