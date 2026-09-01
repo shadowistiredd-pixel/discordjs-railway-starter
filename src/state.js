@@ -1,136 +1,125 @@
 'use strict';
 
-const fs   = require('fs');
-const path = require('path');
+const { MongoClient } = require('mongodb');
 
-const CREDITS_FILE = path.join(__dirname, 'report_credits.json');
-const META_FILE     = path.join(__dirname, 'report_credits_meta.json');
-const BLOCKED_FILE  = path.join(__dirname, 'blocked_users.json');
+// ─────────────────────────────────────────────────────────────────────────────
+//  MongoDB connection
+//  Set MONGODB_URI in Railway's Variables tab.
+//  Format: mongodb+srv://<user>:<password>@<cluster>.mongodb.net/<dbname>
+// ─────────────────────────────────────────────────────────────────────────────
+const MONGODB_URI = process.env.MONGODB_URI;
+if (!MONGODB_URI) throw new Error('Missing MONGODB_URI environment variable.');
 
-/** Load credits from disk (returns a plain object keyed by userId). */
-function loadCredits() {
-  try {
-    return JSON.parse(fs.readFileSync(CREDITS_FILE, 'utf8'));
-  } catch {
-    return {};
+const mongo  = new MongoClient(MONGODB_URI);
+let db       = null;
+
+// Collection references (set after connect)
+let colCredits = null;
+let colMeta    = null;
+let colBlocked = null;
+
+/**
+ * Connect to MongoDB and load all persisted state into memory.
+ * Call this once before starting the bot (awaited in index.js).
+ */
+async function connect() {
+  await mongo.connect();
+  db         = mongo.db('nekoma');
+  colCredits = db.collection('credits');
+  colMeta    = db.collection('meta');
+  colBlocked = db.collection('blocked');
+
+  // Load credits into in-memory map
+  const creditDocs = await colCredits.find({}).toArray();
+  for (const doc of creditDocs) {
+    module.exports.reportCredits.set(doc.userId, doc.credits);
   }
+
+  // Load meta
+  const metaDoc = await colMeta.findOne({ _id: 'meta' });
+  if (metaDoc) module.exports.lastResetMonth = metaDoc.lastResetMonth;
+
+  // Load blocked users
+  const blockedDocs = await colBlocked.find({}).toArray();
+  for (const doc of blockedDocs) {
+    module.exports.blockedUsers.add(doc.userId);
+  }
+
+  console.log('[DB] Connected to MongoDB and state loaded.');
 }
 
-/** Load the "last reset" bookkeeping (which YYYY-MM the board was last cleared for). */
-function loadMeta() {
-  try {
-    return JSON.parse(fs.readFileSync(META_FILE, 'utf8'));
-  } catch {
-    return { lastResetMonth: currentMonthKey() };
-  }
-}
-
-/** Load blocked user IDs from disk (returns an array). */
-function loadBlocked() {
-  try {
-    return JSON.parse(fs.readFileSync(BLOCKED_FILE, 'utf8'));
-  } catch {
-    return [];
-  }
-}
-
+// ─────────────────────────────────────────────────────────────────────────────
+//  Helpers
+// ─────────────────────────────────────────────────────────────────────────────
 function currentMonthKey() {
   const now = new Date();
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
-/** Persist credits to disk synchronously (file is tiny, writes are rare). */
-function saveCredits() {
-  const obj = Object.fromEntries(module.exports.reportCredits);
-  fs.writeFileSync(CREDITS_FILE, JSON.stringify(obj, null, 2), 'utf8');
-}
-
-function saveMeta() {
-  fs.writeFileSync(
-    META_FILE,
-    JSON.stringify({ lastResetMonth: module.exports.lastResetMonth }, null, 2),
-    'utf8'
-  );
-}
-
-function saveBlocked() {
-  fs.writeFileSync(
-    BLOCKED_FILE,
-    JSON.stringify([...module.exports.blockedUsers], null, 2),
-    'utf8'
-  );
-}
-
-/**
- * Increment a user's report-credit counter by 1 and persist it.
- * @param {string} userId
- */
-function addCredit(userId) {
-  const map = module.exports.reportCredits;
-  map.set(userId, (map.get(userId) || 0) + 1);
-  saveCredits();
-}
-
-/**
- * Subtract `amount` credits from a single user (floored at 0) and persist.
- * @param {string} userId
- * @param {number} amount
- * @returns {number} the user's new credit total
- */
-function deductCredits(userId, amount) {
-  const map = module.exports.reportCredits;
-  const next = Math.max(0, (map.get(userId) || 0) - amount);
-  if (next === 0) {
-    map.delete(userId);
+async function saveCredit(userId, credits) {
+  if (credits <= 0) {
+    await colCredits.deleteOne({ userId });
   } else {
-    map.set(userId, next);
+    await colCredits.updateOne(
+      { userId },
+      { $set: { userId, credits } },
+      { upsert: true }
+    );
   }
-  saveCredits();
+}
+
+async function saveMeta() {
+  await colMeta.updateOne(
+    { _id: 'meta' },
+    { $set: { lastResetMonth: module.exports.lastResetMonth } },
+    { upsert: true }
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Public API  (mirrors the original state.js exactly)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function addCredit(userId) {
+  const map  = module.exports.reportCredits;
+  const next = (map.get(userId) || 0) + 1;
+  map.set(userId, next);
+  await saveCredit(userId, next);
+}
+
+async function deductCredits(userId, amount) {
+  const map  = module.exports.reportCredits;
+  const next = Math.max(0, (map.get(userId) || 0) - amount);
+  if (next === 0) map.delete(userId); else map.set(userId, next);
+  await saveCredit(userId, next);
   return next;
 }
 
-/**
- * Reset a single user's credits to 0 (removes them from the board).
- * @param {string} userId
- * @returns {boolean} true if the user had an entry to clear
- */
-function resetUserCredits(userId) {
+async function resetUserCredits(userId) {
   const map = module.exports.reportCredits;
   const had = map.delete(userId);
-  if (had) saveCredits();
+  if (had) await colCredits.deleteOne({ userId });
   return had;
 }
 
-/** Wipe every user's credits. Returns how many entries were cleared. */
-function resetAllCredits() {
-  const map = module.exports.reportCredits;
+async function resetAllCredits() {
+  const map   = module.exports.reportCredits;
   const count = map.size;
   map.clear();
-  saveCredits();
+  await colCredits.deleteMany({});
   return count;
 }
 
-/**
- * If the calendar month has rolled over since the last reset, wipe the
- * board and record the new month. Safe to call as often as you like
- * (e.g. on an hourly timer) — it's a no-op within the same month.
- * @returns {boolean} true if a reset happened
- */
-function resetIfNewMonth() {
+async function resetIfNewMonth() {
   const nowKey = currentMonthKey();
   if (module.exports.lastResetMonth === nowKey) return false;
 
-  resetAllCredits();
+  await resetAllCredits();
   module.exports.lastResetMonth = nowKey;
-  saveMeta();
+  await saveMeta();
   return true;
 }
 
-/**
- * Return the top-N users sorted by credits descending.
- * @param {number} [n=3]
- * @returns {{ userId: string, credits: number }[]}
- */
 function getTopCredits(n = 3) {
   return [...module.exports.reportCredits.entries()]
     .sort((a, b) => b[1] - a[1])
@@ -138,60 +127,42 @@ function getTopCredits(n = 3) {
     .map(([userId, credits]) => ({ userId, credits }));
 }
 
-/**
- * Block a user from opening new reports.
- * @param {string} userId
- * @returns {boolean} false if they were already blocked
- */
-function blockUser(userId) {
+async function blockUser(userId) {
   const set = module.exports.blockedUsers;
   if (set.has(userId)) return false;
   set.add(userId);
-  saveBlocked();
+  await colBlocked.updateOne({ userId }, { $set: { userId } }, { upsert: true });
   return true;
 }
 
-/**
- * Unblock a user.
- * @param {string} userId
- * @returns {boolean} false if they weren't blocked
- */
-function unblockUser(userId) {
+async function unblockUser(userId) {
   const set = module.exports.blockedUsers;
   if (!set.has(userId)) return false;
   set.delete(userId);
-  saveBlocked();
+  await colBlocked.deleteOne({ userId });
   return true;
 }
 
-/** @param {string} userId */
 function isBlocked(userId) {
   return module.exports.blockedUsers.has(userId);
 }
 
 module.exports = {
-  reportActive:   false,
-  reportOwnerId:  null,
-
-  /** Set<userId> — users who currently have an open gank report */
+  // Runtime-only state (never persisted)
+  reportActive:     false,
+  reportOwnerId:    null,
   userActiveReport: new Set(),
+  activeReportCtx:  null,
 
-  /**
-   * Everything needed to close the currently-open report from anywhere
-   * (the normal End Report button, or the staff panel). Null when no
-   * report is open.
-   */
-  activeReportCtx: null,
+  // Persisted state (loaded from MongoDB on connect())
+  reportCredits:  new Map(),
+  lastResetMonth: currentMonthKey(),
+  blockedUsers:   new Set(),
 
-  /** Map<userId, number> — lifetime report credits */
-  reportCredits: new Map(Object.entries(loadCredits())),
+  // DB
+  connect,
 
-  /** YYYY-MM the board was last cleared for */
-  lastResetMonth: loadMeta().lastResetMonth,
-
-  /** Set<userId> — users blocked from opening new reports */
-  blockedUsers: new Set(loadBlocked()),
-
+  // API
   addCredit,
   deductCredits,
   resetUserCredits,
