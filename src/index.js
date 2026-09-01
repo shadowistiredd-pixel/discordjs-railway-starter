@@ -61,6 +61,7 @@ function startMonthlyResetChecker() {
 }
 
 client.once('ready', async () => {
+  await state.connect();
   try {
     await registerCommands();
   } catch (err) {
