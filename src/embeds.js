@@ -1,35 +1,46 @@
 'use strict';
 
-require('dotenv').config();
+const { EmbedBuilder } = require('discord.js');
+const { FOOTER_TEXT, FOOTER_ICON } = require('./config');
 
-function requireEnv(name) {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(
-      `${name} environment variable is not set.\n` +
-        `Add it to your .env file (see .env.example).`
+/**
+ * Builds the standard report embed used for the live report,
+ * the "closed" state, and the log-channel copy.
+ */
+function buildReportEmbed({
+  title,
+  color,
+  callerName,
+  robloxValue,
+  linkValue,
+  seenValue,
+  enemiesValue,
+  notesValue,
+  proofUrl = null,
+  avatarUrl = null,
+}) {
+  const embed = new EmbedBuilder()
+    .setTitle(title)
+    .setColor(color)
+    .setFooter({ text: FOOTER_TEXT, iconURL: FOOTER_ICON })
+    .addFields(
+      { name: 'CALLER', value: callerName, inline: false },
+      { name: 'JOIN OFF', value: robloxValue, inline: false },
+      { name: 'PROFILE LINK', value: linkValue || 'N/A', inline: false },
+      { name: 'LAST SEEN', value: seenValue || 'N/A', inline: false },
+      { name: 'OPPONENTS', value: enemiesValue, inline: false },
+      { name: 'REGION', value: notesValue || 'No additional notes', inline: false }
     );
+
+  if (avatarUrl) {
+    embed.setThumbnail(avatarUrl);
   }
-  return value;
+
+  if (proofUrl) {
+    embed.setImage(proofUrl);
+  }
+
+  return embed;
 }
 
-module.exports = {
-  TOKEN: requireEnv('DISCORD_BOT_TOKEN'),
-  CLIENT_ID: process.env.DISCORD_CLIENT_ID || null,
-  GUILD_ID: process.env.DISCORD_GUILD_ID || null,
-
-  BRAND_NAME: 'Nek:// Nekoma Report System',
-
-  FOOTER_TEXT: 'Nek:// Nekoma Report System',
-  FOOTER_ICON:
-    'https://cdn.discordapp.com/icons/1521901612396974110/' +
-    '23565ee27659813e2cdd014b22b933e4.webp?size=1024',
-
-  GANK_ROLE_ID: process.env.GANK_ROLE_ID || '1521972811856613557',
-  STAFF_ROLE_ID: process.env.STAFF_ROLE_ID || null,
-
-  POS_CHECK_COOLDOWN_MS: 30 * 60 * 1000, // 30 minutes
-
-  // Roblox avatar-headshot thumbnail fetched for the embed
-  ROBLOX_AVATAR_SIZE: '420x420',
-};
+module.exports = { buildReportEmbed };
