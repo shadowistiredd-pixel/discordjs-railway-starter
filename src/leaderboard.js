@@ -6,11 +6,11 @@ const { AttachmentBuilder }       = require('discord.js');
 const state                       = require('./state');
 
 // Register the bundled font before any canvas drawing happens.
-// The font file lives at  src/fonts/Inter-Regular.ttf  and
-// src/fonts/Inter-Bold.ttf — see README for how to add them.
+// The font file lives at  src/fonts/Roboto-Regular.ttf  and
+// src/fonts/Roboto-Bold.ttf — see README for how to add them.
 try {
-  registerFont(path.join(__dirname, 'fonts', 'Inter-Bold.ttf'),    { family: 'Inter', weight: 'bold' });
-  registerFont(path.join(__dirname, 'fonts', 'Inter-Regular.ttf'), { family: 'Inter' });
+  registerFont(path.join(__dirname, 'fonts', 'Roboto-Bold.ttf'),    { family: 'Inter', weight: 'bold' });
+  registerFont(path.join(__dirname, 'fonts', 'Roboto-Regular.ttf'), { family: 'Inter' });
 } catch {
   // Falls back to system fonts if the files aren't present (local dev).
 }
