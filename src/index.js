@@ -18,6 +18,8 @@ const {
   handleStaffButton,
   handleStaffModal,
 } = require('./staffpanel');
+const { handleRecruitButton, handleRecruitModal } = require('./recruit');
+const { handleRecruitPanelCommand }               = require('./recruitpanel');
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
@@ -37,6 +39,11 @@ const commands = [
   new SlashCommandBuilder()
     .setName('staffpanel')
     .setDescription('Staff: end the active report, or manage the credits board')
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('recruitpanel')
+    .setDescription('Staff: post the persistent recruit panel')
     .toJSON(),
 ];
 
@@ -90,10 +97,16 @@ client.on('interactionCreate', async (interaction) => {
         await handleStaffPanelCommand(interaction);
         return;
       }
+
+      if (interaction.commandName === 'recruitpanel') {
+        await handleRecruitPanelCommand(interaction);
+        return;
+      }
     }
 
     if (interaction.isModalSubmit()) {
       if (await handleStaffModal(interaction)) return;
+      if (await handleRecruitModal(interaction)) return;
       await handleModalSubmit(interaction);
       return;
     }
@@ -101,6 +114,10 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isButton()) {
       if (interaction.customId.startsWith('staff_')) {
         await handleStaffButton(interaction);
+        return;
+      }
+      if (interaction.customId === 'recruit_new' || interaction.customId === 'recruit_close') {
+        await handleRecruitButton(interaction);
         return;
       }
       if (await handleReportButton(interaction)) return;
