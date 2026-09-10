@@ -14,10 +14,11 @@ const mongo  = new MongoClient(MONGODB_URI);
 let db       = null;
 
 // Collection references (set after connect)
-let colCredits        = null;
-let colMeta           = null;
-let colBlocked        = null;
-let colRecruitCredits = null;
+let colCredits         = null;
+let colMeta            = null;
+let colBlocked         = null;
+let colRecruitCredits  = null;
+let colRecruiterThreads = null;
 
 /**
  * Connect to MongoDB and load all persisted state into memory.
@@ -25,11 +26,12 @@ let colRecruitCredits = null;
  */
 async function connect() {
   await mongo.connect();
-  db                = mongo.db('nekoma');
-  colCredits        = db.collection('credits');
-  colMeta           = db.collection('meta');
-  colBlocked        = db.collection('blocked');
-  colRecruitCredits = db.collection('recruitCredits');
+  db                   = mongo.db('nekoma');
+  colCredits           = db.collection('credits');
+  colMeta              = db.collection('meta');
+  colBlocked           = db.collection('blocked');
+  colRecruitCredits    = db.collection('recruitCredits');
+  colRecruiterThreads  = db.collection('recruiterThreads');
 
   // Load credits into in-memory map
   const creditDocs = await colCredits.find({}).toArray();
@@ -51,6 +53,12 @@ async function connect() {
   const recruitDocs = await colRecruitCredits.find({}).toArray();
   for (const doc of recruitDocs) {
     module.exports.recruitCredits.set(doc.userId, doc.credits);
+  }
+
+  // Load recruiter -> threadId mappings
+  const threadDocs = await colRecruiterThreads.find({}).toArray();
+  for (const doc of threadDocs) {
+    module.exports.recruiterThreads.set(doc.userId, doc.threadId);
   }
 
   console.log('[DB] Connected to MongoDB and state loaded.');
@@ -208,6 +216,28 @@ function getTopRecruitCredits(n = 3) {
     .map(([userId, credits]) => ({ userId, credits }));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Public API — Recruiter threads (one persistent thread per recruiter)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function setRecruiterThread(userId, threadId) {
+  module.exports.recruiterThreads.set(userId, threadId);
+  await colRecruiterThreads.updateOne(
+    { userId },
+    { $set: { userId, threadId } },
+    { upsert: true }
+  );
+}
+
+async function clearRecruiterThread(userId) {
+  module.exports.recruiterThreads.delete(userId);
+  await colRecruiterThreads.deleteOne({ userId });
+}
+
+function getRecruiterThread(userId) {
+  return module.exports.recruiterThreads.get(userId) || null;
+}
+
 module.exports = {
   // Runtime-only state (never persisted)
   reportActive:     false,
@@ -217,13 +247,13 @@ module.exports = {
 
   // Recruit runtime state (never persisted)
   recruitDrafts:  new Map(),  // userId -> { recruiter, discord, roblox }
-  activeRecruits: new Map(),  // threadId -> { callerId, recruiter, ... }
 
   // Persisted state (loaded from MongoDB on connect())
-  reportCredits:  new Map(),
-  lastResetMonth: currentMonthKey(),
-  blockedUsers:   new Set(),
-  recruitCredits: new Map(),
+  reportCredits:    new Map(),
+  lastResetMonth:   currentMonthKey(),
+  blockedUsers:     new Set(),
+  recruitCredits:   new Map(),
+  recruiterThreads: new Map(), // userId -> threadId
 
   // DB
   connect,
@@ -239,10 +269,15 @@ module.exports = {
   unblockUser,
   isBlocked,
 
-  // Recruit API
+  // Recruit credit API
   addRecruitCredit,
   deductRecruitCredits,
   resetUserRecruitCredits,
   resetAllRecruitCredits,
   getTopRecruitCredits,
+
+  // Recruiter thread API
+  setRecruiterThread,
+  clearRecruiterThread,
+  getRecruiterThread,
 };
