@@ -50,7 +50,7 @@ async function fetchRobloxAvatarHeadshot(username) {
 function buildRecruitModal(draft = {}) {
   const modal = new ModalBuilder()
     .setCustomId(MODAL_ID)
-    .setTitle('New Recruit — Nekoma');
+    .setTitle('New Recruit Nekoma');
 
   const recruiterInput = new TextInputBuilder()
     .setCustomId('recruiter')
@@ -148,7 +148,7 @@ async function handleRecruitModal(interaction) {
 
   const closeButton = new ButtonBuilder()
     .setCustomId(CLOSE_BUTTON_ID)
-    .setLabel('Close Recruit')
+    .setLabel('Recruit left')
     .setStyle(ButtonStyle.Danger);
 
   const row = new ActionRowBuilder().addComponents(closeButton);
@@ -157,7 +157,7 @@ async function handleRecruitModal(interaction) {
   let thread;
   try {
     thread = await forumChannel.threads.create({
-      name: `📋 ${roblox} — recruited by ${recruiter}`,
+      name: `📋 ${recruiter}'s recruits.`,
       message: {
         embeds: [embed],
         components: [row],
@@ -248,7 +248,7 @@ async function handleCloseButton(interaction) {
 // ---------------------------------------------------------------------------
 function buildRecruitEmbed({ recruiter, callerId, discord, roblox, avatarUrl }) {
   const embed = new EmbedBuilder()
-    .setTitle('Nek:// Nekoma — New Recruit')
+    .setTitle('Nek:// Nekoma - New Recruit')
     .setColor(Colors.Green)
     .setFooter({ text: config.FOOTER_TEXT, iconURL: config.FOOTER_ICON })
     .addFields(
