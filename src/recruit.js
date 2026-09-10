@@ -18,7 +18,7 @@ const MODAL_ID        = 'nek_recruit_modal';
 const CLOSE_BUTTON_ID = 'recruit_close';
 
 // ---------------------------------------------------------------------------
-// Roblox avatar-headshot lookup (reused from report.js pattern)
+// Roblox avatar-headshot lookup
 // ---------------------------------------------------------------------------
 async function fetchRobloxAvatarHeadshot(username) {
   try {
@@ -50,7 +50,7 @@ async function fetchRobloxAvatarHeadshot(username) {
 function buildRecruitModal(draft = {}) {
   const modal = new ModalBuilder()
     .setCustomId(MODAL_ID)
-    .setTitle('New Recruit Nekoma');
+    .setTitle('New Recruit — Nekoma');
 
   const recruiterInput = new TextInputBuilder()
     .setCustomId('recruiter')
@@ -114,12 +114,12 @@ async function handleRecruitButton(interaction) {
 async function handleRecruitModal(interaction) {
   if (interaction.customId !== MODAL_ID) return false;
 
-  const callerId    = interaction.user.id;
-  const recruiter   = interaction.fields.getTextInputValue('recruiter').trim();
-  const discord     = interaction.fields.getTextInputValue('discord').trim();
-  const roblox      = interaction.fields.getTextInputValue('roblox').trim();
+  const callerId  = interaction.user.id;
+  const recruiter = interaction.fields.getTextInputValue('recruiter').trim();
+  const discord   = interaction.fields.getTextInputValue('discord').trim();
+  const roblox    = interaction.fields.getTextInputValue('roblox').trim();
 
-  // Save draft in case something goes wrong — also clears on success below
+  // Save draft — cleared on success below
   state.recruitDrafts.set(callerId, { recruiter, discord, roblox });
 
   await interaction.deferReply({ ephemeral: true });
@@ -148,49 +148,70 @@ async function handleRecruitModal(interaction) {
 
   const closeButton = new ButtonBuilder()
     .setCustomId(CLOSE_BUTTON_ID)
-    .setLabel('Recruit left')
+    .setLabel('Close Thread')
     .setStyle(ButtonStyle.Danger);
 
   const row = new ActionRowBuilder().addComponents(closeButton);
 
-  // Create the forum thread
-  let thread;
-  try {
-    thread = await forumChannel.threads.create({
-      name: `📋 ${recruiter}'s recruits.`,
-      message: {
-        embeds: [embed],
-        components: [row],
-      },
-    });
-  } catch (err) {
-    console.error('[RECRUIT] Failed to create forum thread:', err);
-    await interaction.editReply({
-      content: '❌ Failed to create the forum post. Make sure I have permission to post in that channel.',
-    });
-    return true;
+  // ── Check if this recruiter already has an open thread ──────────────────
+  const existingThreadId = state.getRecruiterThread(callerId);
+  let thread = null;
+
+  if (existingThreadId) {
+    try {
+      thread = await interaction.client.channels.fetch(existingThreadId);
+
+      // If the thread was manually deleted or archived+locked, treat it as gone
+      if (!thread || thread.archived) {
+        thread = null;
+        await state.clearRecruiterThread(callerId);
+      }
+    } catch {
+      // Channel fetch failed (deleted) — start fresh
+      thread = null;
+      await state.clearRecruiterThread(callerId);
+    }
+  }
+
+  if (thread) {
+    // Post a new recruit entry inside the existing thread
+    try {
+      await thread.send({ embeds: [embed], components: [row] });
+    } catch (err) {
+      console.error('[RECRUIT] Failed to post in existing thread:', err);
+      await interaction.editReply({
+        content: '❌ Failed to post in your existing recruit thread. It may have been deleted or locked.',
+      });
+      return true;
+    }
+  } else {
+    // Create a new thread and persist the mapping
+    try {
+      thread = await forumChannel.threads.create({
+        name: `📋 Recruits — ${recruiter}`,
+        message: { embeds: [embed], components: [row] },
+      });
+      await state.setRecruiterThread(callerId, thread.id);
+    } catch (err) {
+      console.error('[RECRUIT] Failed to create forum thread:', err);
+      await interaction.editReply({
+        content: '❌ Failed to create your recruit thread. Make sure I have permission to post in that channel.',
+      });
+      return true;
+    }
   }
 
   // Award recruit credit
   await state.addRecruitCredit(callerId);
   const total = state.recruitCredits.get(callerId) || 0;
 
-  // Store thread metadata so the close button can verify ownership
-  state.activeRecruits.set(thread.id, {
-    callerId,
-    recruiter,
-    discord,
-    roblox,
-    avatarUrl,
-    threadId: thread.id,
-  });
-
   // Clear the draft on success
   state.recruitDrafts.delete(callerId);
 
+  const isNew = !existingThreadId || !thread;
   await interaction.editReply({
     content:
-      `✅ Recruit logged! Forum post created.\n` +
+      `✅ Recruit logged! ${isNew ? 'New thread created.' : 'Added to your existing recruit thread.'}\n` +
       `You now have **${total}** recruit credit${total !== 1 ? 's' : ''}.`,
   });
 
@@ -198,40 +219,45 @@ async function handleRecruitModal(interaction) {
 }
 
 // ---------------------------------------------------------------------------
-// Close Recruit button — only the recruiter who made it can close
+// Close Thread button — only the recruiter who owns the thread can close it.
+// Locks + archives the thread and clears the persisted mapping so a new
+// thread is created on the recruiter's next submission.
 // ---------------------------------------------------------------------------
 async function handleCloseButton(interaction) {
   const threadId = interaction.channel?.id;
-  const ctx      = state.activeRecruits.get(threadId);
 
-  if (!ctx) {
+  // Look up which recruiter owns this thread
+  let ownerId = null;
+  for (const [userId, tid] of state.recruiterThreads.entries()) {
+    if (tid === threadId) { ownerId = userId; break; }
+  }
+
+  if (!ownerId) {
     await interaction.reply({
-      content: 'This recruit post is already closed or was not found.',
+      content: 'This thread is already closed or was not recognised.',
       ephemeral: true,
     });
     return;
   }
 
-  if (interaction.user.id !== ctx.callerId) {
+  if (interaction.user.id !== ownerId) {
     await interaction.reply({
-      content: '❌ Only the recruiter who opened this post can close it.',
+      content: '❌ Only the recruiter who owns this thread can close it.',
       ephemeral: true,
     });
     return;
   }
 
-  // Disable the button
+  // Disable the button on the message that was clicked
   const disabledButton = new ButtonBuilder()
     .setCustomId(CLOSE_BUTTON_ID)
     .setLabel('Closed')
     .setStyle(ButtonStyle.Secondary)
     .setDisabled(true);
 
-  const row = new ActionRowBuilder().addComponents(disabledButton);
+  await interaction.update({ components: [new ActionRowBuilder().addComponents(disabledButton)] }).catch(() => {});
 
-  await interaction.update({ components: [row] }).catch(() => {});
-
-  // Lock the thread
+  // Lock + archive the thread
   try {
     await interaction.channel.setLocked(true);
     await interaction.channel.setArchived(true);
@@ -239,8 +265,8 @@ async function handleCloseButton(interaction) {
     console.error('[RECRUIT] Failed to lock/archive thread:', err);
   }
 
-  // Remove from active recruits
-  state.activeRecruits.delete(threadId);
+  // Clear the mapping — next recruit from this user will get a fresh thread
+  await state.clearRecruiterThread(ownerId);
 }
 
 // ---------------------------------------------------------------------------
@@ -248,7 +274,7 @@ async function handleCloseButton(interaction) {
 // ---------------------------------------------------------------------------
 function buildRecruitEmbed({ recruiter, callerId, discord, roblox, avatarUrl }) {
   const embed = new EmbedBuilder()
-    .setTitle('Nek:// Nekoma - New Recruit')
+    .setTitle('Nek:// Nekoma — New Recruit')
     .setColor(Colors.Green)
     .setFooter({ text: config.FOOTER_TEXT, iconURL: config.FOOTER_ICON })
     .addFields(
