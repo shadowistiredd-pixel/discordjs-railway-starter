@@ -20,6 +20,11 @@ const {
 } = require('./staffpanel');
 const { handleRecruitButton, handleRecruitModal } = require('./recruit');
 const { handleRecruitPanelCommand }               = require('./recruitpanel');
+const {
+  handleOwnerPanelCommand,
+  handleOwnerButton,
+  handleOwnerModal,
+} = require('./ownerpanel');
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
@@ -44,6 +49,11 @@ const commands = [
   new SlashCommandBuilder()
     .setName('recruitpanel')
     .setDescription('Staff: post the persistent recruit panel')
+    .toJSON(),
+
+  new SlashCommandBuilder()
+    .setName('ownerpanel')
+    .setDescription('Owner: config overrides, staff grants, kill switches, data export')
     .toJSON(),
 ];
 
@@ -102,9 +112,15 @@ client.on('interactionCreate', async (interaction) => {
         await handleRecruitPanelCommand(interaction);
         return;
       }
+
+      if (interaction.commandName === 'ownerpanel') {
+        await handleOwnerPanelCommand(interaction);
+        return;
+      }
     }
 
     if (interaction.isModalSubmit()) {
+      if (await handleOwnerModal(interaction)) return;
       if (await handleStaffModal(interaction)) return;
       if (await handleRecruitModal(interaction)) return;
       await handleModalSubmit(interaction);
@@ -112,6 +128,10 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.isButton()) {
+      if (interaction.customId.startsWith('owner_')) {
+        await handleOwnerButton(interaction);
+        return;
+      }
       if (interaction.customId.startsWith('staff_')) {
         await handleStaffButton(interaction);
         return;
