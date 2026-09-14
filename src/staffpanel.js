@@ -169,7 +169,7 @@ async function handleStaffButton(interaction) {
   }
 
   if (customId === 'staff_reset_all_confirm') {
-    const count = state.resetAllCredits();
+    const count = await state.resetAllCredits();
     await interaction.update({
       content: `✅ Board reset — cleared **${count}** user(s).`,
       components: [],
@@ -216,7 +216,7 @@ async function handleStaffModal(interaction) {
     }
 
     const before = state.reportCredits.get(userId) || 0;
-    const after = state.deductCredits(userId, amount);
+    const after = await state.deductCredits(userId, amount);
     await interaction.reply({
       content: `✅ Deducted **${before - after}** credit(s) from <@${userId}> (**${before}** → **${after}**).`,
       ephemeral: true,
@@ -225,7 +225,7 @@ async function handleStaffModal(interaction) {
   }
 
   if (customId === BLOCK_MODAL_ID) {
-    const wasNew = state.blockUser(userId);
+    const wasNew = await state.blockUser(userId);
     await interaction.reply({
       content: wasNew
         ? `🚫 <@${userId}> is now blocked from making gank reports.`
@@ -236,7 +236,7 @@ async function handleStaffModal(interaction) {
   }
 
   // UNBLOCK_MODAL_ID
-  const wasBlocked = state.unblockUser(userId);
+  const wasBlocked = await state.unblockUser(userId);
   await interaction.reply({
     content: wasBlocked
       ? `✅ <@${userId}> can make gank reports again.`
