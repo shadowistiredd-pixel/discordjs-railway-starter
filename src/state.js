@@ -19,6 +19,10 @@ let colMeta            = null;
 let colBlocked         = null;
 let colRecruitCredits  = null;
 let colRecruiterThreads = null;
+let colSettings        = null; // owner-configurable overrides (role/channel IDs)
+let colStaffGrants     = null; // individually-granted staff (independent of STAFF_ROLE_ID)
+let colFlags           = null; // feature kill-switches (reports/recruiting on/off)
+let colAuditLog        = null; // owner action history
 
 /**
  * Connect to MongoDB and load all persisted state into memory.
@@ -32,6 +36,10 @@ async function connect() {
   colBlocked           = db.collection('blocked');
   colRecruitCredits    = db.collection('recruitCredits');
   colRecruiterThreads  = db.collection('recruiterThreads');
+  colSettings          = db.collection('settings');
+  colStaffGrants       = db.collection('staffGrants');
+  colFlags             = db.collection('flags');
+  colAuditLog          = db.collection('auditLog');
 
   // Load credits into in-memory map
   const creditDocs = await colCredits.find({}).toArray();
@@ -61,8 +69,32 @@ async function connect() {
     module.exports.recruiterThreads.set(doc.userId, doc.threadId);
   }
 
+  // Load settings overrides (role/channel IDs the owner has changed at runtime)
+  const settingsDoc = await colSettings.findOne({ _id: 'settings' });
+  if (settingsDoc) Object.assign(module.exports.settings, settingsDoc.values || {});
+
+  // Load individually-granted staff
+  const staffDocs = await colStaffGrants.find({}).toArray();
+  for (const doc of staffDocs) {
+    module.exports.staffUserIds.add(doc.userId);
+  }
+
+  // Load feature flags
+  const flagsDoc = await colFlags.findOne({ _id: 'flags' });
+  if (flagsDoc) Object.assign(module.exports.featureFlags, flagsDoc.values || {});
+
+  // Load recent audit log entries (most recent first, capped)
+  const auditDocs = await colAuditLog
+    .find({})
+    .sort({ timestamp: -1 })
+    .limit(AUDIT_LOG_LIMIT)
+    .toArray();
+  module.exports.auditLog = auditDocs.reverse();
+
   console.log('[DB] Connected to MongoDB and state loaded.');
 }
+
+const AUDIT_LOG_LIMIT = 100; // keep memory + reads bounded; older entries stay in Mongo
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Helpers
@@ -238,6 +270,109 @@ function getRecruiterThread(userId) {
   return module.exports.recruiterThreads.get(userId) || null;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Public API — Runtime settings overrides (owner-configurable role/channel IDs)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function setSetting(key, value) {
+  module.exports.settings[key] = value;
+  await colSettings.updateOne(
+    { _id: 'settings' },
+    { $set: { [`values.${key}`]: value } },
+    { upsert: true }
+  );
+}
+
+function getSetting(key, fallback = null) {
+  const value = module.exports.settings[key];
+  return value === undefined || value === null || value === '' ? fallback : value;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Public API — Individually-granted staff (separate from STAFF_ROLE_ID)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function grantStaff(userId) {
+  const set = module.exports.staffUserIds;
+  if (set.has(userId)) return false;
+  set.add(userId);
+  await colStaffGrants.updateOne({ userId }, { $set: { userId } }, { upsert: true });
+  return true;
+}
+
+async function revokeStaff(userId) {
+  const set = module.exports.staffUserIds;
+  if (!set.has(userId)) return false;
+  set.delete(userId);
+  await colStaffGrants.deleteOne({ userId });
+  return true;
+}
+
+function isGrantedStaff(userId) {
+  return module.exports.staffUserIds.has(userId);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Public API — Feature flags (kill switches)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function setFeatureFlag(key, value) {
+  module.exports.featureFlags[key] = value;
+  await colFlags.updateOne(
+    { _id: 'flags' },
+    { $set: { [`values.${key}`]: value } },
+    { upsert: true }
+  );
+}
+
+function getFeatureFlag(key, fallback = true) {
+  const value = module.exports.featureFlags[key];
+  return value === undefined ? fallback : value;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Public API — Audit log (owner actions)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function logOwnerAction(actorId, action, detail = '') {
+  const entry = { actorId, action, detail, timestamp: new Date() };
+  module.exports.auditLog.push(entry);
+  if (module.exports.auditLog.length > AUDIT_LOG_LIMIT) {
+    module.exports.auditLog.shift();
+  }
+  await colAuditLog.insertOne(entry);
+}
+
+function getRecentAuditLog(n = 10) {
+  return module.exports.auditLog.slice(-n).reverse();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Public API — Manual credit set (owner override, distinct from add/deduct)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function setCredits(userId, amount) {
+  const map = module.exports.reportCredits;
+  if (amount <= 0) map.delete(userId); else map.set(userId, amount);
+  await saveCredit(userId, amount);
+  return amount;
+}
+
+function exportCreditsData() {
+  return {
+    exportedAt: new Date().toISOString(),
+    reportCredits: [...module.exports.reportCredits.entries()].map(([userId, credits]) => ({
+      userId,
+      credits,
+    })),
+    recruitCredits: [...module.exports.recruitCredits.entries()].map(([userId, credits]) => ({
+      userId,
+      credits,
+    })),
+    blockedUsers: [...module.exports.blockedUsers],
+  };
+}
+
 module.exports = {
   // Runtime-only state (never persisted)
   reportActive:     false,
@@ -254,6 +389,10 @@ module.exports = {
   blockedUsers:     new Set(),
   recruitCredits:   new Map(),
   recruiterThreads: new Map(), // userId -> threadId
+  settings:         {},        // runtime overrides, e.g. { gankRoleId, recruitForumId }
+  staffUserIds:     new Set(), // individually-granted staff
+  featureFlags:     { reportsEnabled: true, recruitingEnabled: true },
+  auditLog:         [],        // most-recent-last, capped at AUDIT_LOG_LIMIT
 
   // DB
   connect,
@@ -280,4 +419,25 @@ module.exports = {
   setRecruiterThread,
   clearRecruiterThread,
   getRecruiterThread,
+
+  // Settings overrides API
+  setSetting,
+  getSetting,
+
+  // Staff grants API
+  grantStaff,
+  revokeStaff,
+  isGrantedStaff,
+
+  // Feature flags API
+  setFeatureFlag,
+  getFeatureFlag,
+
+  // Audit log API
+  logOwnerAction,
+  getRecentAuditLog,
+
+  // Manual credit override + export
+  setCredits,
+  exportCreditsData,
 };
