@@ -95,6 +95,13 @@ async function handleRecruitButton(interaction) {
   const { customId } = interaction;
 
   if (customId === 'recruit_new') {
+    if (!state.getFeatureFlag('recruitingEnabled')) {
+      await interaction.reply({
+        content: '⛔ Recruiting is currently disabled by an owner.',
+        ephemeral: true,
+      });
+      return true;
+    }
     const draft = state.recruitDrafts.get(interaction.user.id) || {};
     await interaction.showModal(buildRecruitModal(draft));
     return true;
@@ -114,6 +121,14 @@ async function handleRecruitButton(interaction) {
 async function handleRecruitModal(interaction) {
   if (interaction.customId !== MODAL_ID) return false;
 
+  if (!state.getFeatureFlag('recruitingEnabled')) {
+    await interaction.reply({
+      content: '⛔ Recruiting is currently disabled by an owner.',
+      ephemeral: true,
+    });
+    return true;
+  }
+
   const callerId  = interaction.user.id;
   const recruiter = interaction.fields.getTextInputValue('recruiter').trim();
   const discord   = interaction.fields.getTextInputValue('discord').trim();
@@ -129,7 +144,9 @@ async function handleRecruitModal(interaction) {
   // Fetch the forum channel
   let forumChannel;
   try {
-    forumChannel = await interaction.client.channels.fetch(config.RECRUIT_FORUM_ID);
+    forumChannel = await interaction.client.channels.fetch(
+      state.getSetting('recruitForumId', config.RECRUIT_FORUM_ID)
+    );
   } catch {
     await interaction.editReply({
       content: '❌ Could not find the recruit forum channel. Contact an admin.',
