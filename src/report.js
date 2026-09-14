@@ -49,6 +49,14 @@ async function fetchRobloxAvatarHeadshot(username) {
 async function handleReportCommand(interaction) {
   const callerId = interaction.user.id;
 
+  if (!state.getFeatureFlag('reportsEnabled')) {
+    await interaction.reply({
+      content: '⛔ Gank reports are currently disabled by an owner.',
+      ephemeral: true,
+    });
+    return;
+  }
+
   if (state.isBlocked(callerId)) {
     await interaction.reply({
       content: '🚫 You have been blocked from making gank reports.',
@@ -125,6 +133,14 @@ async function handleModalSubmit(interaction) {
 
   const callerId = interaction.user.id;
 
+  if (!state.getFeatureFlag('reportsEnabled')) {
+    await interaction.reply({
+      content: '⛔ Gank reports are currently disabled by an owner.',
+      ephemeral: true,
+    });
+    return;
+  }
+
   if (state.isBlocked(callerId)) {
     await interaction.reply({
       content: '🚫 You have been blocked from making gank reports.',
@@ -195,7 +211,7 @@ async function handleModalSubmit(interaction) {
 
   const reportMessage = await interaction.editReply({ embeds: [embed], components: [row] });
 
-  const roleId = config.GANK_ROLE_ID;
+  const roleId = state.getSetting('gankRoleId', config.GANK_ROLE_ID);
 
   await interaction.followUp({
     content: `<@&${roleId}>`,
@@ -284,11 +300,23 @@ async function handleReportButton(interaction) {
   return true;
 }
 
-/** Staff = has the configured staff role, or Manage Server permission. */
+/**
+ * Staff = has the configured staff role, has Manage Server permission,
+ * or was individually granted staff via the owner panel.
+ */
 function isStaff(member) {
   if (!member) return false;
   if (config.STAFF_ROLE_ID && member.roles?.cache?.has(config.STAFF_ROLE_ID)) return true;
+  if (state.isGrantedStaff(member.id)) return true;
   return member.permissions?.has?.('ManageGuild') ?? false;
+}
+
+/** Owner = has the configured owner role. Deliberately not staff-or-owner —
+ *  owner powers (config, kill switches, staff grants) are separate from
+ *  day-to-day moderation and require their own role. */
+function isOwner(member) {
+  if (!member) return false;
+  return config.OWNER_ROLE_ID ? member.roles?.cache?.has(config.OWNER_ROLE_ID) ?? false : false;
 }
 
 // ---------------------------------------------------------------------------
@@ -315,7 +343,7 @@ async function closeReport(ctx) {
   // Award +1 report credit to the caller and everyone who clocked in
   const recipients = new Set([...clockedIn, callerId]);
   for (const uid of recipients) {
-    state.addCredit(uid);
+    await state.addCredit(uid);
   }
 
   const creditLines = [...recipients]
@@ -360,5 +388,6 @@ module.exports = {
   handleReportButton,
   closeReport,
   isStaff,
+  isOwner,
   MODAL_ID,
 };
