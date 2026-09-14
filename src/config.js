@@ -27,6 +27,7 @@ module.exports = {
 
   GANK_ROLE_ID: process.env.GANK_ROLE_ID || '1521972811856613557',
   STAFF_ROLE_ID: process.env.STAFF_ROLE_ID || null,
+  OWNER_ROLE_ID: process.env.OWNER_ROLE_ID || null,
 
   RECRUIT_FORUM_ID: process.env.RECRUIT_FORUM_ID || '1529659272332447785',
 
